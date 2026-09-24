@@ -13,6 +13,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <memory>
+#include <atomic>
 
 namespace blickfeld {
 namespace ros_interop {
@@ -54,6 +55,7 @@ class Qb2Driver {
   bool use_measurement_timestamp_ = false;
 
   std::unique_ptr<Qb2LidarRos> qb2_;
+  std::atomic<bool> is_running_{true};
   boost::asio::thread_pool spin_thread_{1};
 
   /// The Diagnostic Updater object to output device driver state

@@ -1,41 +1,33 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 project(blickfeld_qb2_ros2_driver)
 
 # Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options
 
-# build tests, defaults is ON
-option(BUILD_TESTS "Build ${CMAKE_PROJECT_NAME} tests" ON)
 # build against deployed qb2 protocols, defaults is ON
 option(BUILD_DEPLOYED_PROTOCOL "Build ${CMAKE_PROJECT_NAME} deployed_protocol"
        ON)
-
-# Build tests
-if(BUILD_TESTS)
-  enable_testing()
-endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # find Boost dependencies
-find_package(Boost 1.40.0 REQUIRED system)
+find_package(Boost 1.71 REQUIRED CONFIG)
+find_package(Threads REQUIRED)
 
 # find build tool dependencies
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
 # find ROS2 dependencies
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(diagnostic_msgs REQUIRED)
 find_package(diagnostic_updater REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclpy REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -44,9 +36,12 @@ find_package(std_srvs REQUIRED)
 if(BUILD_DEPLOYED_PROTOCOL)
   # fetch blickfeld API dependencies
   include(FetchContent)
+  # Qb2 SDK v3.0.7. Pin the protocol so rebuilding cannot silently change the API.
+  set(BLICKFELD_QB2_REVISION "181c2e06991155cec5b3a490a179ac6c9673eb9f"
+      CACHE STRING "Blickfeld Qb2 SDK Git revision")
   FetchContent_Declare(blickfeld-qb2
     GIT_REPOSITORY https://github.com/Blickfeld/blickfeld-qb2.git
-    GIT_TAG main)
+    GIT_TAG ${BLICKFELD_QB2_REVISION})
   FetchContent_MakeAvailable(blickfeld-qb2)
   set(blickfeld-protocol blickfeld-qb2)
 else()
@@ -80,6 +75,8 @@ target_include_directories(qb2_lidar_ros PUBLIC
   ${sensor_msgs_INCLUDE_DIRS})
 
 target_link_libraries(qb2_lidar_ros PUBLIC 
+  Boost::headers
+  Threads::Threads
   ${rclcpp_LIBRARIES} 
   ${diagnostic_msgs_LIBRARIES}
   ${diagnostic_updater_LIBRARIES}
@@ -112,7 +109,6 @@ target_include_directories(qb2_ros2_driver PUBLIC
 
 target_compile_definitions(qb2_ros2_driver PRIVATE "COMPOSITION_BUILDING_DLL")
 rclcpp_components_register_nodes(qb2_ros2_driver "blickfeld::ros_interop::Qb2Driver")
-set(node_plugins "${node_plugins}qb2_ros2_driver;$<TARGET_FILE:node_component>\n")
 
 # add composable node for snapshot driver
 add_library(qb2_ros2_snapshot_driver SHARED src/qb2_ros2_snapshot_driver.cpp)
@@ -137,12 +133,10 @@ target_link_libraries(qb2_ros2_snapshot_driver PUBLIC
   ${sensor_msgs_LIBRARIES}
   ${std_srvs_LIBRARIES} 
   ${blickfeld-protocol} 
-  Boost::system
   qb2_lidar_ros)
 
 target_compile_definitions(qb2_ros2_snapshot_driver PRIVATE "COMPOSITION_BUILDING_DLL")
 rclcpp_components_register_nodes(qb2_ros2_snapshot_driver "blickfeld::ros_interop::Qb2SnapshotDriver")
-set(node_plugins "${node_plugins}qb2_ros2_snapshot_driver;$<TARGET_FILE:node_component>\n")
 
 install(
   TARGETS qb2_lidar_ros qb2_ros2_driver qb2_ros2_snapshot_driver
@@ -151,13 +145,10 @@ install(
   RUNTIME DESTINATION bin)
 
 # Install launch files
-install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
 # Testing
-if(BUILD_TESTS)
-  find_package(ament_lint_auto REQUIRED)
-  ament_lint_auto_find_test_dependencies()
-
+if(BUILD_TESTING)
   # Add gtests
   find_package(ament_cmake_gtest REQUIRED)
   add_subdirectory(tests)

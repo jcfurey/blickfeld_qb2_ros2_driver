@@ -3,6 +3,7 @@
 #include <rclcpp/exceptions.hpp>
 
 #include <string>
+#include <stdexcept>
 
 namespace blickfeld {
 namespace ros_interop {
@@ -34,7 +35,13 @@ Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
   /// figure out the host and method of connection
   if ((system_unix_socket.empty() || core_processing_unix_socket.empty()) && fqdn.empty()) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "Neither unix socket nor fqdn were provided!");
-    rclcpp::shutdown();
+    throw std::invalid_argument("Provide fqdn or both system_unix_socket and core_processing_unix_socket");
+  }
+  if (system_unix_socket.empty() != core_processing_unix_socket.empty()) {
+    throw std::invalid_argument("Both Unix socket paths must be provided together");
+  }
+  if (!application_key.empty() && serial_number.empty()) {
+    throw std::invalid_argument("serial_number is required when application_key is set");
   }
 
   Host host;
@@ -70,6 +77,7 @@ Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
 }
 
 Qb2Driver::~Qb2Driver() {
+  is_running_ = false;
   qb2_->shutdownThreads();
 
   spin_thread_.stop();
@@ -77,7 +85,7 @@ Qb2Driver::~Qb2Driver() {
 }
 
 void Qb2Driver::spinDriver() {
-  while (rclcpp::ok() == true) {
+  while (is_running_ && rclcpp::ok(node_->get_node_base_interface()->get_context())) {
     rclcpp::Time read_frame_ts = node_->now();
     std::optional<Qb2Frame> frame = qb2_->readFrame();
     stamp_status_->tick(read_frame_ts);

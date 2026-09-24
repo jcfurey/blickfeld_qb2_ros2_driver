@@ -1,14 +1,5 @@
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/609281088cfefc76f9d0ce82e1ff6c30cc3591e5.zip
-)
-FetchContent_GetProperties(googletest)
+ament_add_gtest(test_point_cloud test_point_cloud.cpp)
+target_link_libraries(test_point_cloud qb2_lidar_ros)
 
-if(NOT googletest_POPULATED)
-  FetchContent_Populate(googletest)
-  add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR} EXCLUDE_FROM_ALL)
-endif()
-
-# List testcases here:
-add_subdirectory(dummy)
+ament_add_gtest(test_parameters test_parameters.cpp TIMEOUT 45)
+target_link_libraries(test_parameters qb2_ros2_driver qb2_ros2_snapshot_driver)

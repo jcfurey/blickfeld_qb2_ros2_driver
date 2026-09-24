@@ -4,6 +4,9 @@
 #include <rclcpp/exceptions.hpp>
 
 #include <string>
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
 
 namespace blickfeld {
 namespace ros_interop {
@@ -22,16 +25,20 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
   bool point_id = node_->declare_parameter<bool>("publish_point_id", false);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'publish_point_id' is set to: " << (point_id ? "True" : "False"));
 
-  max_retries_ = node_->declare_parameter<uint8_t>("max_retries", max_retries_);
-  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'max_retries' is set to: " << max_retries_);
+  const auto max_retries = node_->declare_parameter<int>("max_retries", max_retries_);
+  if (max_retries < 1 || max_retries > 255) {
+    throw std::invalid_argument("max_retries must be between 1 and 255");
+  }
+  max_retries_ = static_cast<uint8_t>(max_retries);
+  RCLCPP_INFO_STREAM(node_->get_logger(), "The 'max_retries' is set to: " << max_retries);
 
   double snapshot_frame_rate = node_->declare_parameter<double>("snapshot_frame_rate", 0.1);
-  if (snapshot_frame_rate < min_allowed_snapshot_frame_rate_ ||
+  if (!std::isfinite(snapshot_frame_rate) || snapshot_frame_rate < min_allowed_snapshot_frame_rate_ ||
       snapshot_frame_rate > max_allowed_snapshot_frame_rate_) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "The 'snapshot_frame_rate' can only be in this range ["
                                                  << min_allowed_snapshot_frame_rate_ << ", "
                                                  << max_allowed_snapshot_frame_rate_ << "].");
-    rclcpp::shutdown();
+    throw std::invalid_argument("snapshot_frame_rate must be between 0 and 0.1 Hz");
   }
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'snapshot_frame_rate' is set to: " << snapshot_frame_rate);
 
@@ -58,28 +65,35 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
 
   if ((system_unix_sockets.empty() || core_processing_unix_sockets.empty()) && fqdns.empty()) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "Neither unix socket nor fqdn were provided!");
-    rclcpp::shutdown();
+    throw std::invalid_argument("Provide fqdns or both Unix socket lists");
   }
 
   const std::vector<size_t> fqdn_parameter_sizes{fqdns.size(), fqdn_serial_numbers.size(), fqdn_application_keys.size(),
                                                  fqdn_frame_ids.size(), fqdn_point_cloud_topics.size()};
-  if (!std::equal(fqdn_parameter_sizes.begin(), fqdn_parameter_sizes.end(), fqdn_parameter_sizes.begin())) {
+  if (!std::all_of(fqdn_parameter_sizes.begin(), fqdn_parameter_sizes.end(),
+                   [&](size_t size) { return size == fqdns.size(); })) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "Sizes of parameters don't match: fqdns: "
                                                  << fqdns.size() << ", fqdn_frame_ids: " << fqdn_frame_ids.size()
                                                  << ", fqdn_point_cloud_topics: " << fqdn_point_cloud_topics.size());
-    rclcpp::shutdown();
+    throw std::invalid_argument("All five fqdn parameter lists must have the same length");
+  }
+  for (size_t i = 0; i < fqdns.size(); ++i) {
+    if (!fqdn_application_keys[i].empty() && fqdn_serial_numbers[i].empty()) {
+      throw std::invalid_argument("Each application key requires a corresponding serial number");
+    }
   }
 
   const std::vector<size_t> socket_parameter_sizes{system_unix_sockets.size(), core_processing_unix_sockets.size(),
                                                    unix_socket_frame_ids.size(), unix_socket_point_cloud_topics.size()};
-  if (!std::equal(socket_parameter_sizes.begin(), socket_parameter_sizes.end(), socket_parameter_sizes.begin())) {
+  if (!std::all_of(socket_parameter_sizes.begin(), socket_parameter_sizes.end(),
+                   [&](size_t size) { return size == system_unix_sockets.size(); })) {
     RCLCPP_FATAL_STREAM(node_->get_logger(),
                         "Sizes of parameters don't match: system_unix_sockets: "
                             << system_unix_sockets.size()
                             << ", core_processing_unix_sockets: " << core_processing_unix_sockets.size()
                             << ", unix_socket_frame_ids: " << unix_socket_frame_ids.size()
                             << ", unix_socket_point_cloud_topics: " << unix_socket_point_cloud_topics.size());
-    rclcpp::shutdown();
+    throw std::invalid_argument("All four Unix socket parameter lists must have the same length");
   }
 
   /// set the name of the driver as the hardwareID of the updater
@@ -108,8 +122,10 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
         response->success = this->snapshotTriggerCallback();
       });
 
-  /// HINT: In order to get an immediate snapshot we call the function once
-  snapshotTriggerCallback();
+  // Manual mode (0 Hz) waits for the trigger service.
+  if (snapshot_frame_rate > 0) {
+    snapshotTriggerCallback();
+  }
 }
 
 Qb2SnapshotDriver::~Qb2SnapshotDriver() {
@@ -162,7 +178,7 @@ void Qb2SnapshotDriver::setupQb2UnixSockets(const std::vector<std::string>& syst
 
 bool Qb2SnapshotDriver::snapshotTriggerCallback() {
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Try to get a snapshot if one is not running");
-  if (snapshot_is_running_ == false) {
+  if (!snapshot_is_running_.exchange(true)) {
     boost::asio::post(snapshot_thread_, [&]() { this->snapshot(); });
     return true;
   } else {
@@ -172,7 +188,6 @@ bool Qb2SnapshotDriver::snapshotTriggerCallback() {
 }
 
 void Qb2SnapshotDriver::snapshot() {
-  snapshot_is_running_ = true;
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Snapshot a frame from all Qb2s.");
 
   /// read all frames

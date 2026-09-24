@@ -1,6 +1,8 @@
 #include "utility/qb2_ros2_utils.h"
 
 #include <grpc++/client_context.h>
+#include <cstring>
+#include <stdexcept>
 
 namespace blickfeld {
 namespace ros_interop {
@@ -17,6 +19,12 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
   }
 
   const auto number_of_points = frame.binary().length();
+  const auto& binary = frame.binary();
+  if (binary.cartesian().size() / (3 * sizeof(float)) < number_of_points ||
+      (qb2.point_cloud_info.intensity && binary.photon_count().size() / sizeof(uint16_t) < number_of_points) ||
+      (qb2.point_cloud_info.point_id && binary.direction_id().size() / sizeof(uint32_t) < number_of_points)) {
+    throw std::invalid_argument("Qb2 frame binary fields are shorter than the declared point count");
+  }
 
   /// add fields to PointCloud2 msg
   addPointCloudField<float>(std::ref(*point_cloud), "x", point_cloud->point_step,
@@ -37,10 +45,6 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
                                  sensor_msgs::msg::PointField::UINT32);
   }
 
-  float* cartesian = (float*)frame.binary().cartesian().data();
-  uint16_t* photon_count = (uint16_t*)frame.binary().photon_count().data();
-  uint32_t* direction_id = (uint32_t*)frame.binary().direction_id().data();
-
   /// reserve memory
   point_cloud->data.resize(number_of_points * point_cloud->point_step);
 
@@ -53,19 +57,24 @@ std::unique_ptr<sensor_msgs::msg::PointCloud2> convertToPointCloudMsg(const Qb2F
 
   /// copy the data
   for (unsigned int i = 0; i < number_of_points; i++) {
+    float cartesian[3];
+    std::memcpy(cartesian, binary.cartesian().data() + i * sizeof(cartesian), sizeof(cartesian));
     /// cartesian (X, Y, Z)
     assignField<float>(std::ref(*point_cloud), i, 0, cartesian[0]);
     assignField<float>(std::ref(*point_cloud), i, 1, cartesian[1]);
     assignField<float>(std::ref(*point_cloud), i, 2, cartesian[2]);
     /// intensity
-    if (qb2.point_cloud_info.intensity == true) assignField<uint32_t>(std::ref(*point_cloud), i, 3, photon_count[0]);
+    if (qb2.point_cloud_info.intensity) {
+      uint16_t photon_count;
+      std::memcpy(&photon_count, binary.photon_count().data() + i * sizeof(photon_count), sizeof(photon_count));
+      assignField<uint32_t>(*point_cloud, i, 3, photon_count);
+    }
     /// point_id
-    if (qb2.point_cloud_info.point_id == true) assignField<uint32_t>(std::ref(*point_cloud), i, 4, direction_id[0]);
-
-    // advance pointers
-    cartesian = cartesian + 3;
-    photon_count++;
-    direction_id++;
+    if (qb2.point_cloud_info.point_id) {
+      uint32_t direction_id;
+      std::memcpy(&direction_id, binary.direction_id().data() + i * sizeof(direction_id), sizeof(direction_id));
+      assignField<uint32_t>(*point_cloud, i, qb2.point_cloud_info.intensity ? 4 : 3, direction_id);
+    }
   }
   return point_cloud;
 }

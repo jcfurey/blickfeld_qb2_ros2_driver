@@ -28,7 +28,8 @@ Qb2LidarRos::Qb2LidarRos(rclcpp::Node::SharedPtr node, const Qb2Info& qb2,
 
   /// HINT: Snapshot mode: The window size contains one snapshot plus a 10 second buffer for establishing the connection
   /// with the devices. Live mode: The window size is 5 seconds
-  const int window_size = qb2_.snapshot.mode ? (1 / qb2_.snapshot.frame_rate) + 10 : 5;
+  const int window_size = qb2_.snapshot.mode && qb2_.snapshot.frame_rate > 0
+                              ? (1 / qb2_.snapshot.frame_rate) + 10 : 5;
   diagnostic_updater::FrequencyStatusParam frequency_status(&frequency_, &frequency_, frequency_tolerance_,
                                                             window_size);
   diagnostic_updater::TimeStampStatusParam timestamp_delay;
@@ -81,7 +82,13 @@ std::optional<Qb2Frame> Qb2LidarRos::readFrame() {
 }
 
 void Qb2LidarRos::publishFrame(const Qb2Frame& frame, rclcpp::Time timestamp) {
-  auto point_cloud = convertToPointCloudMsg(frame, qb2_, timestamp);
+  std::unique_ptr<sensor_msgs::msg::PointCloud2> point_cloud;
+  try {
+    point_cloud = convertToPointCloudMsg(frame, qb2_, timestamp);
+  } catch (const std::invalid_argument& error) {
+    RCLCPP_WARN(node_->get_logger(), "Dropping invalid Qb2 frame: %s", error.what());
+    return;
+  }
   point_cloud_publisher_->publish(std::move(point_cloud));
 
   driver_status_.onPublishingFrame();

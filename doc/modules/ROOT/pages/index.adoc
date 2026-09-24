@@ -23,6 +23,10 @@ The Blickfeld Qb2 ROS2 driver supports the following ROS2 distributions:
 
 * Foxy Fitzroy
 * Humble Hawksbill
+* Lyrical Luth (this fork: Ubuntu 26.04 build and hardware-free startup tests)
+
+For the Lyrical build, configurable launch files, and current verification limits,
+see the repository README. Physical Qb2 testing on Lyrical is still pending.
 
 == Initial result
 

@@ -12,6 +12,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <memory>
+#include <cstring>
 #include <optional>
 #include <string>
 
@@ -28,9 +29,9 @@ namespace ros_interop {
 template <typename FieldT, typename ValueT>
 __attribute__((always_inline)) inline void assignField(sensor_msgs::msg::PointCloud2& point_cloud, size_t point_index,
                                                        size_t field_index, const ValueT& value) {
-  *reinterpret_cast<FieldT*>(
-      &point_cloud.data[point_index * point_cloud.point_step + point_cloud.fields[field_index].offset]) =
-      static_cast<FieldT>(value);
+  const FieldT converted = static_cast<FieldT>(value);
+  std::memcpy(&point_cloud.data[point_index * point_cloud.point_step + point_cloud.fields[field_index].offset],
+              &converted, sizeof(converted));
 }
 
 /**
