@@ -9,11 +9,10 @@ PointCloudReader::PointCloudReader(rclcpp::Node::SharedPtr node, const Qb2Info& 
 
 PointCloudReader::~PointCloudReader() { cancel(); }
 
-void PointCloudReader::cancel() {
-  if (point_cloud_context_ != nullptr) {
-    point_cloud_context_->TryCancel();
-  }
+void PointCloudReader::cancel(bool permanently) {
+  point_cloud_context_.cancel(permanently);
 }
+
 }  // namespace qb2
 }  // namespace ros_interop
 }  // namespace blickfeld

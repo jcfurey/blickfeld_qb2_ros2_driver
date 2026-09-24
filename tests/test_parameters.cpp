@@ -79,3 +79,27 @@ TEST_F(Parameters, ManualSnapshotCanLoadAndUnloadWithoutDevice) {
   }
   EXPECT_TRUE(rclcpp::ok());
 }
+
+#include "utility/parameters.h"
+#include <fstream>
+#include <unistd.h>
+
+TEST_F(Parameters, StartupParametersRejectIneffectiveChanges) {
+  auto node = std::make_shared<rclcpp::Node>("startup_parameters");
+  EXPECT_EQ(startupParameter<std::string>(*node, "frame_id", "lidar"), "lidar");
+  EXPECT_TRUE(node->describe_parameter("frame_id").read_only);
+  const auto result = node->set_parameter(rclcpp::Parameter("frame_id", "different"));
+  EXPECT_FALSE(result.successful);
+  EXPECT_EQ(node->get_parameter("frame_id").as_string(), "lidar");
+}
+
+TEST_F(Parameters, PrivateKeyFilesValidateWithoutExposingValues) {
+  const auto path = "/tmp/qb2-test-key-" + std::to_string(getpid());
+  { std::ofstream file(path); file << "  test-key\n"; }
+  EXPECT_EQ(applicationKey("", path), "test-key");
+  EXPECT_THROW(applicationKey("conflicting-key", path), std::invalid_argument);
+  { std::ofstream file(path); file << "\n"; }
+  EXPECT_THROW(applicationKey("", path), std::invalid_argument);
+  unlink(path.c_str());
+  EXPECT_THROW(applicationKey("", path), std::invalid_argument);
+}

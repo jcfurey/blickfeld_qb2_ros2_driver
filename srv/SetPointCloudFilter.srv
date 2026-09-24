@@ -1,0 +1,9 @@
+# Only named fields are updated. reflectivity_range updates its three fields.
+string[] fields
+PointCloudFilter configuration
+bool dry_run true
+---
+bool success
+string message
+bool applied
+PointCloudFilter configuration

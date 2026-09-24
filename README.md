@@ -2,9 +2,10 @@
 
 ROS2 driver for the Qb2 LiDAR devices of Blickfeld GmbH.
 
-This fork builds on **ROS 2 Lyrical / Ubuntu 26.04**. The live and snapshot
-components have been tested without a connected sensor; physical-device
-streaming and authentication still need verification.
+This fork builds on **ROS 2 Lyrical / Ubuntu 26.04**. Authenticated live streaming and RViz have been verified with a physical Qb2.
+The revised driver has also passed live streaming, configuration reads, dry runs,
+and applied frame-rate/range-filter changes with readback on **AMINA firmware
+3.0.9**. The original scan settings and filters were restored after testing.
 
 ## Build on Lyrical
 
@@ -52,11 +53,15 @@ direct component loading retains the upstream node defaults. Available options:
 ros2 launch blickfeld_qb2_ros2_driver blickfeld_qb2_ros2_driver.launch.py --show-args
 ```
 
-If application-key authentication is enabled on the device, also supply
-`serial_number:=<device-serial>` and `application_key:=<application-key>`.
+For authenticated devices, put the application key in a private file and supply
+`serial_number:=<device-serial>` and `application_key_file:=/absolute/path/to/key`.
+The file is read at startup; its contents are not stored in a ROS parameter.
+The legacy `application_key` parameter remains supported, but its value is
+visible through ROS parameter services. Do not supply both forms.
 The key requires the matching serial number; empty credentials are the default.
 The SDK uses TCP 55551 for TLS and TCP 50051 to discover the serial number when
-one is not supplied. Configure the sensor's scan pattern in its web interface.
+one is not supplied. See [sensor configuration](doc/sensor_configuration.md) for
+the scan-pattern and point-cloud-filter services. Startup does not modify sensor settings.
 Keep `use_measurement_timestamp:=false` until sensor and host clocks are
 synchronized. The driver does not publish a TF transform; in RViz, set the
 fixed frame to `lidar` and add a PointCloud2 display for `/bf/points_raw`.
@@ -69,11 +74,74 @@ ros2 topic echo /bf/points_raw --once --field header
 ros2 topic echo /diagnostics --once
 ```
 
+## Selectable scan profiles
+
+Switch profiles while the driver and RViz keep running:
+
+```bash
+ros2 run blickfeld_qb2_ros2_driver qb2_profile --list
+ros2 run blickfeld_qb2_ros2_driver qb2_profile balanced --apply  # 4 Hz
+ros2 run blickfeld_qb2_ros2_driver qb2_profile motion --apply    # 6 Hz
+ros2 run blickfeld_qb2_ros2_driver qb2_profile mapping --apply   # 2 Hz
+```
+
+Omit `--apply` to validate without changing the sensor. The profiles change only
+the target frame rate; the sensor adjusts scanline counts during uniform scanning.
+On the tested Qb2, mapping produced denser frames and motion produced faster updates.
+Device limits are checked for every request. These rates are starting points for
+the tested 90° × 50° uniform scan, not universal presets for every configuration.
+
+Use the same `ROS_DOMAIN_ID` and discovery settings as the running driver. For
+the local test session, set `ROS_DOMAIN_ID=170` and
+`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`. A namespaced driver needs, for example,
+`--driver-node /front/blickfeld_qb2_driver`. See
+[profile customization and measured results](doc/sensor_configuration.md#selectable-profiles).
+
+## ROS interfaces and composition
+
+Both components also have standalone executables:
+
+```bash
+ros2 run blickfeld_qb2_ros2_driver qb2_driver --ros-args -p fqdn:=192.168.1.100
+ros2 run blickfeld_qb2_ros2_driver qb2_snapshot_driver --ros-args --params-file /absolute/path/to/snapshot.yaml
+```
+
+Driver settings are read-only after startup; changing a connection, output field,
+frame, or snapshot schedule requires restarting the component. Sensor settings
+use explicit services with validation and readback, rather than parameters that
+claim to change without updating the device. Caller-provided `NodeOptions`,
+including intra-process communication, are respected.
+
+Both launch files accept `namespace:=front`. Default relative topic names then
+resolve to `/front/bf/points_raw`; an explicitly absolute topic remains absolute.
+The driver retains reliable, volatile, depth-1 publisher defaults for existing
+subscribers. ROS's standard QoS overrides allow a sensor-data profile, for example:
+
+```bash
+ros2 run blickfeld_qb2_ros2_driver qb2_driver --ros-args \
+  -p fqdn:=192.168.1.100 -p point_cloud_topic:=points \
+  -p qos_overrides./points.publisher.reliability:=best_effort \
+  -p qos_overrides./points.publisher.depth:=5
+```
+
+Use the fully resolved topic name in QoS override keys. Overrides are startup
+settings. The same parameters can be supplied in a component's YAML configuration.
+
+The point coordinates remain in the vendor's sensor coordinate system, in metres.
+Changing `frame_id` only changes the label; it does not rotate points. See the
+[vendor coordinate diagram](https://docs.blickfeld.com/qb2/Qb2/working_principles/coordinate_system.html)
+and supply the measured mounting transform in TF when integrating with a robot.
+[REP 103](https://www.ros.org/reps/rep-0103.html) uses x-forward/y-left/z-up body
+frames; this driver preserves its existing raw-coordinate convention for compatibility.
+
 ## Snapshot mode
 
 Copy [config/snapshot.yaml](config/snapshot.yaml), enter the devices, and keep
 all five `fqdn_*`/`fqdns` lists the same length. Use an empty string for each
-unused serial number or application key. Then launch your copy:
+unused serial number or application key. Alternatively, supply
+`fqdn_application_key_files` with one path (or empty string) per device; the raw
+key list may then be omitted. Do not give both a key and key file for the same
+device. Then launch your copy:
 
 ```bash
 ros2 launch blickfeld_qb2_ros2_driver blickfeld_qb2_ros2_snapshot_driver.launch.py \
@@ -93,13 +161,21 @@ colcon test --packages-select blickfeld_qb2_ros2_driver --event-handlers console
 colcon test-result --test-result-base build/blickfeld_qb2_ros2_driver --verbose
 ```
 
-On Lyrical, 15 GoogleTest cases cover all intensity/point-ID combinations,
-coordinates, timestamps, empty/truncated frames, startup validation, manual
-snapshot loading, and component unloading while ROS remains active. The tests
-use localhost for unavailable-device checks and need no sensor. Both installed
-launch files were also checked for component loading, point-cloud publishers,
-diagnostics, the snapshot trigger service, and clean SIGINT shutdown. No physical
-Qb2 data was received during these checks.
+On Lyrical, 31 GoogleTest cases cover cloud fields/timestamps, malformed frames,
+startup validation, credential files, diagnostics, frame counters, component
+unloading, and configuration requests against a local gRPC mock sensor. The
+mock tests exercise cancellation before/after context creation, partial updates,
+device-limit checks, dry runs, authentication failures, rejected writes, and
+failed readback. Nine Python tests cover profile loading, invalid rates/fields,
+and explicit apply versus default dry-run requests.
+
+Both installed launch files were checked with namespaces, publisher and service
+discovery, and clean SIGINT shutdown. A separate ROS service-client check verified
+standalone startup, read-only parameters, best-effort/depth-5 QoS overrides,
+and explanatory errors for an offline device.
+
+See [the improvement review](doc/driver_review.md) for benchmark results and
+remaining integration work.
 
 Please check the [Antora documentation](doc/modules/ROOT/pages/index.adoc) for more info.
 

@@ -3,3 +3,14 @@ target_link_libraries(test_point_cloud qb2_lidar_ros)
 
 ament_add_gtest(test_parameters test_parameters.cpp TIMEOUT 45)
 target_link_libraries(test_parameters qb2_ros2_driver qb2_ros2_snapshot_driver)
+
+ament_add_gtest(test_driver_status test_driver_status.cpp)
+target_link_libraries(test_driver_status qb2_lidar_ros)
+ament_add_gtest(test_sensor_configuration test_sensor_configuration.cpp TIMEOUT 45)
+target_link_libraries(test_sensor_configuration qb2_lidar_ros)
+
+# Informational microbenchmark, not a timing-dependent unit test.
+add_executable(benchmark_point_cloud EXCLUDE_FROM_ALL benchmark_point_cloud.cpp)
+target_link_libraries(benchmark_point_cloud qb2_lidar_ros)
+
+ament_add_pytest_test(test_profiles test_profiles.py TIMEOUT 30)

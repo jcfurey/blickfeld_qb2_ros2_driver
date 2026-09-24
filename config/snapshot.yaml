@@ -1,4 +1,4 @@
-blickfeld_qb2_snapshot_driver:
+/**/blickfeld_qb2_snapshot_driver:
   ros__parameters:
     # All five lists must have equal lengths. Empty credentials are valid
     # when the device does not require an application key.
@@ -6,7 +6,7 @@ blickfeld_qb2_snapshot_driver:
     fqdn_serial_numbers: [""]
     fqdn_application_keys: [""]
     fqdn_frame_ids: ["lidar"]
-    fqdn_point_cloud_topics: ["/bf/points_raw"]
+    fqdn_point_cloud_topics: ["bf/points_raw"]
     # 0.0 waits for /bf/trigger_snapshot; 0.1 captures every ten seconds.
     snapshot_frame_rate: 0.1
     use_measurement_timestamp: false

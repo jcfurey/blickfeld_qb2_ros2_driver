@@ -9,6 +9,7 @@
 #include "qb2/point_cloud_reader.h"
 #include "qb2/point_cloud_streamer.h"
 #include "qb2/scan_pattern_watcher.h"
+#include "qb2/sensor_configuration.h"
 #include "qb2_driver_status.h"
 #include "qb2_ros2_type.h"
 
@@ -44,7 +45,8 @@ class Qb2LidarRos {
    * @param[in, out]  diagnostic_updater the diagnostic updater for registering the diagnostic update function
    */
   Qb2LidarRos(rclcpp::Node::SharedPtr node, const Qb2Info& qb2, diagnostic_updater::Updater& diagnostic_updater,
-              std::unique_ptr<qb2::PointCloudReader> point_cloud_reader);
+              std::unique_ptr<qb2::PointCloudReader> point_cloud_reader,
+              const std::string& service_prefix = "~");
 
   /**
    * @brief Destructor
@@ -107,7 +109,7 @@ class Qb2LidarRos {
    * @brief Disconnect from device and sleep if there is a failure in communication with Qb2
    *
    */
-  void onCommunicationFailure();
+  void updateTopicDiagnostic(diagnostic_updater::DiagnosticStatusWrapper& status);
 
   rclcpp::Node::SharedPtr node_;
 
@@ -120,9 +122,15 @@ class Qb2LidarRos {
   std::unique_ptr<qb2::PointCloudReader> point_cloud_reader_;
   std::unique_ptr<qb2::ScanPatternWatcher> scan_pattern_watcher_;
 
+  std::unique_ptr<qb2::SensorConfiguration> sensor_configuration_;
+
   /// ROS publisher for point cloud
-  std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> point_cloud_publisher_raw_;
-  std::shared_ptr<diagnostic_updater::DiagnosedPublisher<sensor_msgs::msg::PointCloud2>> point_cloud_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_publisher_;
+  std::unique_ptr<diagnostic_updater::FrequencyStatus> frequency_status_;
+  std::unique_ptr<diagnostic_updater::TimeStampStatus> timestamp_status_;
+  std::mutex diagnostic_mutex_;
+  std::atomic<uint64_t> published_frames_{0};
+  uint64_t last_diagnosed_frames_ = 0;
 
   /// Threads used to watch the scan pattern and connection to Qb2
   boost::asio::thread_pool worker_thread_pool_{2};

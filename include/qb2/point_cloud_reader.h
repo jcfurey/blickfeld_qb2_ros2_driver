@@ -7,6 +7,7 @@
 
 #include "qb2_driver_status.h"
 #include "qb2_ros2_type.h"
+#include "utility/cancellable_context.h"
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -35,7 +36,7 @@ class PointCloudReader {
    * @brief Try to cancel the running getter
    *
    */
-  virtual void cancel();
+  virtual void cancel(bool permanently = false);
 
  protected:
   rclcpp::Node::SharedPtr node_;
@@ -47,7 +48,7 @@ class PointCloudReader {
   std::shared_ptr<grpc::Channel> qb2_channel_;
 
   /// The gRPC client context for Qb2
-  std::unique_ptr<grpc::ClientContext> point_cloud_context_ = nullptr;
+  CancellableContext point_cloud_context_;
 };
 }  // namespace qb2
 }  // namespace ros_interop

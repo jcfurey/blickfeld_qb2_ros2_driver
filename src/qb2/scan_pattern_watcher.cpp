@@ -2,6 +2,7 @@
 
 #include "utility/qb2_connection_utils.h"
 #include "utility/qb2_ros2_utils.h"
+#include "utility/scan_pattern_utils.h"
 
 namespace blickfeld {
 namespace ros_interop {
@@ -49,7 +50,7 @@ std::pair<CommunicationState, std::optional<Qb2ScanPattern>> ScanPatternWatcher:
       scan_pattern.scanlines_up = response.scan_pattern().vertical().scanlines_up();
       scan_pattern.scanlines_down = response.scan_pattern().vertical().scanlines_down();
       scan_pattern.angle_spacing = response.scan_pattern().pulse().angle_spacing();
-      scan_pattern.frame_rate = response.scan_pattern().frame_rate().maximum();
+      scan_pattern.frame_rate = actualFrameRate(response.scan_pattern());
 
       RCLCPP_INFO_STREAM(node_->get_logger(), "Qb2 scan pattern updated: " << qb2_.hostName() << ".");
       return std::make_pair(CommunicationState::SUCCESS_READ, scan_pattern);
@@ -89,7 +90,7 @@ CommunicationState ScanPatternWatcher::openScanPatternWatch() {
   }
 
   /// renew stream context
-  scan_pattern_watch_context_ = std::make_unique<grpc::ClientContext>();
+  scan_pattern_watch_context_.reset(std::make_unique<grpc::ClientContext>());
   try {
     auto scan_pattern_stub = system::services::ScanPattern::NewStub(qb2_channel_);
     scan_pattern_watch_ = scan_pattern_stub->Watch(scan_pattern_watch_context_.get(), google::protobuf::Empty());
@@ -107,16 +108,14 @@ CommunicationState ScanPatternWatcher::openScanPatternWatch() {
 
 bool ScanPatternWatcher::isWatchingScanPattern() const { return scan_pattern_watch_ ? true : false; }
 
-void ScanPatternWatcher::cancel() {
-  if (scan_pattern_watch_context_ != nullptr) {
-    scan_pattern_watch_context_->TryCancel();
-  }
+void ScanPatternWatcher::cancel(bool permanently) {
+  scan_pattern_watch_context_.cancel(permanently);
 }
 
 void ScanPatternWatcher::disconnect() {
   qb2::disconnect(qb2_channel_, qb2_, node_->get_logger());
-  scan_pattern_watch_context_ = nullptr;
-  scan_pattern_watch_ = nullptr;
+  scan_pattern_watch_.reset();
+  scan_pattern_watch_context_.reset();
 }
 
 }  // namespace qb2

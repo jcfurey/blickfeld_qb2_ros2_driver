@@ -7,6 +7,7 @@
 
 #include "qb2_driver_status.h"
 #include "qb2_ros2_type.h"
+#include "utility/cancellable_context.h"
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -34,7 +35,7 @@ class ScanPatternWatcher {
    * @brief Try to cancel the running watch stream
    *
    */
-  void cancel();
+  void cancel(bool permanently = false);
 
 
  private:
@@ -77,7 +78,7 @@ class ScanPatternWatcher {
   std::shared_ptr<grpc::Channel> qb2_channel_;
 
   /// The gRPC client context for Qb2 streams
-  std::unique_ptr<grpc::ClientContext> scan_pattern_watch_context_ = nullptr;
+  CancellableContext scan_pattern_watch_context_;
 
   /// Unique pointers for Qb2 streams
   std::unique_ptr<grpc::ClientReader<Qb2ScanPatternWatchResponse>> scan_pattern_watch_ = nullptr;

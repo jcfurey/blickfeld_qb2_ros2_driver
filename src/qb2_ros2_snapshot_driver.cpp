@@ -2,6 +2,7 @@
 
 #include <google/protobuf/timestamp.pb.h>
 #include <rclcpp/exceptions.hpp>
+#include "utility/parameters.h"
 
 #include <string>
 #include <algorithm>
@@ -12,27 +13,27 @@ namespace blickfeld {
 namespace ros_interop {
 
 Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
-    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_snapshot_driver", options.use_intra_process_comms(true))),
+    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_snapshot_driver", options)),
       diagnostic_updater_(node_) {
   /// setup parameters
-  use_measurement_timestamp_ = node_->declare_parameter<bool>("use_measurement_timestamp", use_measurement_timestamp_);
+  use_measurement_timestamp_ = startupParameter<bool>(*node_, "use_measurement_timestamp", use_measurement_timestamp_);
   RCLCPP_INFO_STREAM(node_->get_logger(),
                      "The 'use_measurement_timestamp' is set to: " << (use_measurement_timestamp_ ? "True" : "False"));
 
-  bool intensity = node_->declare_parameter<bool>("publish_intensity", false);
+  bool intensity = startupParameter<bool>(*node_, "publish_intensity", false);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'publish_intensity' is set to: " << (intensity ? "True" : "False"));
 
-  bool point_id = node_->declare_parameter<bool>("publish_point_id", false);
+  bool point_id = startupParameter<bool>(*node_, "publish_point_id", false);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'publish_point_id' is set to: " << (point_id ? "True" : "False"));
 
-  const auto max_retries = node_->declare_parameter<int>("max_retries", max_retries_);
+  const auto max_retries = startupParameter<int>(*node_, "max_retries", max_retries_);
   if (max_retries < 1 || max_retries > 255) {
     throw std::invalid_argument("max_retries must be between 1 and 255");
   }
   max_retries_ = static_cast<uint8_t>(max_retries);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'max_retries' is set to: " << max_retries);
 
-  double snapshot_frame_rate = node_->declare_parameter<double>("snapshot_frame_rate", 0.1);
+  double snapshot_frame_rate = startupParameter<double>(*node_, "snapshot_frame_rate", 0.1);
   if (!std::isfinite(snapshot_frame_rate) || snapshot_frame_rate < min_allowed_snapshot_frame_rate_ ||
       snapshot_frame_rate > max_allowed_snapshot_frame_rate_) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "The 'snapshot_frame_rate' can only be in this range ["
@@ -44,24 +45,35 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
 
   /// figure out the hosts and method of connection
   const std::vector<std::string> fqdns =
-      node_->declare_parameter<std::vector<std::string>>("fqdns", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "fqdns", std::vector<std::string>());
   const std::vector<std::string> fqdn_serial_numbers =
-      node_->declare_parameter<std::vector<std::string>>("fqdn_serial_numbers", std::vector<std::string>());
-  const std::vector<std::string> fqdn_application_keys =
-      node_->declare_parameter<std::vector<std::string>>("fqdn_application_keys", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "fqdn_serial_numbers", std::vector<std::string>());
+  std::vector<std::string> fqdn_application_keys =
+      startupParameter<std::vector<std::string>>(*node_, "fqdn_application_keys", std::vector<std::string>());
+  const auto key_files = startupParameter<std::vector<std::string>>(
+      *node_, "fqdn_application_key_files", {});
+  if (!key_files.empty()) {
+    if (key_files.size() != fqdns.size())
+      throw std::invalid_argument("fqdn_application_key_files must match fqdns");
+    if (fqdn_application_keys.empty()) fqdn_application_keys.resize(fqdns.size());
+    if (fqdn_application_keys.size() != fqdns.size())
+      throw std::invalid_argument("fqdn_application_keys must match fqdns");
+    for (size_t i = 0; i < fqdns.size(); ++i)
+      fqdn_application_keys[i] = applicationKey(fqdn_application_keys[i], key_files[i]);
+  }
   const std::vector<std::string> fqdn_frame_ids =
-      node_->declare_parameter<std::vector<std::string>>("fqdn_frame_ids", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "fqdn_frame_ids", std::vector<std::string>());
   const std::vector<std::string> fqdn_point_cloud_topics =
-      node_->declare_parameter<std::vector<std::string>>("fqdn_point_cloud_topics", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "fqdn_point_cloud_topics", std::vector<std::string>());
 
   const std::vector<std::string> system_unix_sockets =
-      node_->declare_parameter<std::vector<std::string>>("system_unix_sockets", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "system_unix_sockets", std::vector<std::string>());
   const std::vector<std::string> core_processing_unix_sockets =
-      node_->declare_parameter<std::vector<std::string>>("core_processing_unix_sockets", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "core_processing_unix_sockets", std::vector<std::string>());
   const std::vector<std::string> unix_socket_frame_ids =
-      node_->declare_parameter<std::vector<std::string>>("unix_socket_frame_ids", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "unix_socket_frame_ids", std::vector<std::string>());
   const std::vector<std::string> unix_socket_point_cloud_topics =
-      node_->declare_parameter<std::vector<std::string>>("unix_socket_point_cloud_topics", std::vector<std::string>());
+      startupParameter<std::vector<std::string>>(*node_, "unix_socket_point_cloud_topics", std::vector<std::string>());
 
   if ((system_unix_sockets.empty() || core_processing_unix_sockets.empty()) && fqdns.empty()) {
     RCLCPP_FATAL_STREAM(node_->get_logger(), "Neither unix socket nor fqdn were provided!");
@@ -99,9 +111,7 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
   /// set the name of the driver as the hardwareID of the updater
   diagnostic_updater_.setHardwareID("Blickfeld Qb2 Snapshot Driver");
   diagnostic_updater_.add(heartbeat_);
-  stamp_status_ = std::make_shared<diagnostic_updater::TimeStampStatus>(diagnostic_updater::TimeStampStatusParam(),
-                                                                        "Read frame time");
-  diagnostic_updater_.add(*stamp_status_);
+
 
   setupQb2Fqdns(fqdns, fqdn_serial_numbers, fqdn_application_keys, fqdn_frame_ids, fqdn_point_cloud_topics,
                 snapshot_frame_rate, intensity, point_id);
@@ -120,6 +130,7 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
       "trigger_snapshot", [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
                                  std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
         response->success = this->snapshotTriggerCallback();
+        response->message = response->success ? "Snapshot queued" : "Snapshot busy or stopping";
       });
 
   // Manual mode (0 Hz) waits for the trigger service.
@@ -129,6 +140,8 @@ Qb2SnapshotDriver::Qb2SnapshotDriver(rclcpp::NodeOptions options)
 }
 
 Qb2SnapshotDriver::~Qb2SnapshotDriver() {
+  stopping_ = true;
+  if (snapshot_timer_) snapshot_timer_->cancel();
   for (auto& qb2 : qb2s_) {
     qb2->shutdownThreads();
   }
@@ -153,7 +166,8 @@ void Qb2SnapshotDriver::setupQb2Fqdns(const std::vector<std::string>& fqdns,
 
     auto point_cloud_reader = std::make_unique<qb2::PointCloudGetter>(node_, qb2_info);
     qb2s_.emplace_back(
-        std::make_unique<Qb2LidarRos>(node_, qb2_info, diagnostic_updater_, std::move(point_cloud_reader)));
+        std::make_unique<Qb2LidarRos>(node_, qb2_info, diagnostic_updater_, std::move(point_cloud_reader),
+                                      "~/devices/device_" + std::to_string(qb2s_.size())));
   }
 }
 
@@ -172,12 +186,14 @@ void Qb2SnapshotDriver::setupQb2UnixSockets(const std::vector<std::string>& syst
 
     auto point_cloud_reader = std::make_unique<qb2::PointCloudGetter>(node_, qb2_info);
     qb2s_.emplace_back(
-        std::make_unique<Qb2LidarRos>(node_, qb2_info, diagnostic_updater_, std::move(point_cloud_reader)));
+        std::make_unique<Qb2LidarRos>(node_, qb2_info, diagnostic_updater_, std::move(point_cloud_reader),
+                                      "~/devices/device_" + std::to_string(qb2s_.size())));
   }
 }
 
 bool Qb2SnapshotDriver::snapshotTriggerCallback() {
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Try to get a snapshot if one is not running");
+  if (stopping_) return false;
   if (!snapshot_is_running_.exchange(true)) {
     boost::asio::post(snapshot_thread_, [&]() { this->snapshot(); });
     return true;
@@ -191,12 +207,15 @@ void Qb2SnapshotDriver::snapshot() {
   RCLCPP_DEBUG_STREAM(node_->get_logger(), "Snapshot a frame from all Qb2s.");
 
   /// read all frames
-  rclcpp::Time read_frame_ts = node_->now();
   std::vector<Qb2Frame> frames;
   for (auto& qb2 : qb2s_) {
     std::optional<Qb2Frame> frame;
     uint8_t num_tries = 0;
     do {
+      if (stopping_ || !rclcpp::ok(node_->get_node_base_interface()->get_context())) {
+        snapshot_is_running_ = false;
+        return;
+      }
       frame = qb2->readFrame();
       num_tries++;
     } while (frame.has_value() == false && num_tries < max_retries_);
@@ -209,7 +228,6 @@ void Qb2SnapshotDriver::snapshot() {
     }
     frames.emplace_back(std::move(frame.value()));
   }
-  stamp_status_->tick(read_frame_ts);
 
   /// get one common timestamp to all frames
   rclcpp::Time snapshots_timestamp;
@@ -226,6 +244,7 @@ void Qb2SnapshotDriver::snapshot() {
   /// publish the frames on their respective topic
   int frame_index = 0;
   for (auto& qb2 : qb2s_) {
+    if (stopping_) break;
     qb2->publishFrame(frames[frame_index], snapshots_timestamp);
     frame_index++;
   }

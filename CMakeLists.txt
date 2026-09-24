@@ -32,6 +32,14 @@ find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/ScanPattern.msg" "msg/PointCloudFilter.msg"
+  "srv/GetScanPattern.srv" "srv/SetScanPattern.srv"
+  "srv/GetPointCloudFilter.srv" "srv/SetPointCloudFilter.srv")
+rosidl_get_typesupport_target(qb2_typesupport ${PROJECT_NAME} rosidl_typesupport_cpp)
+ament_export_dependencies(rosidl_default_runtime)
 
 if(BUILD_DEPLOYED_PROTOCOL)
   # fetch blickfeld API dependencies
@@ -55,88 +63,37 @@ else()
   set(blickfeld-protocol blickfeld-base daedalus-core_processing-protocol daedalus-hardware daedalus-system-protocol)
 endif()
 
-add_library(qb2_lidar_ros SHARED 
+add_library(qb2_lidar_ros SHARED
   src/qb2_lidar_ros.cpp
-  src/qb2/point_cloud_getter.cpp 
-  src/qb2/point_cloud_reader.cpp 
-  src/qb2/point_cloud_streamer.cpp 
-  src/qb2/scan_pattern_watcher.cpp 
+  src/qb2/point_cloud_getter.cpp
+  src/qb2/point_cloud_reader.cpp
+  src/qb2/point_cloud_streamer.cpp
+  src/qb2/sensor_configuration.cpp
+  src/qb2/scan_pattern_watcher.cpp
   src/utility/qb2_connection_utils.cpp
   src/utility/qb2_ros2_utils.cpp
   )
 
-target_include_directories(qb2_lidar_ros PUBLIC 
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include> 
-  ${rclcpp_INCLUDE_DIRS}
-  ${diagnostic_msgs_INCLUDE_DIRS} 
-  ${diagnostic_updater_INCLUDE_DIRS} 
-  ${std_msgs_INCLUDE_DIRS} 
-  ${sensor_msgs_INCLUDE_DIRS})
+target_include_directories(qb2_lidar_ros PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(qb2_lidar_ros PUBLIC
+  Boost::headers Threads::Threads rclcpp::rclcpp
+  diagnostic_updater::diagnostic_updater
+  diagnostic_msgs::diagnostic_msgs__rosidl_typesupport_cpp
+  rcl_interfaces::rcl_interfaces__rosidl_typesupport_cpp
+  sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+  ${blickfeld-protocol} ${qb2_typesupport})
 
-target_link_libraries(qb2_lidar_ros PUBLIC 
-  Boost::headers
-  Threads::Threads
-  ${rclcpp_LIBRARIES} 
-  ${diagnostic_msgs_LIBRARIES}
-  ${diagnostic_updater_LIBRARIES}
-  ${std_msgs_LIBRARIES}
-  ${sensor_msgs_LIBRARIES} 
-  ${blickfeld-protocol})
-
-# add composable node for driver
 add_library(qb2_ros2_driver SHARED src/qb2_ros2_driver.cpp)
+target_link_libraries(qb2_ros2_driver PUBLIC qb2_lidar_ros rclcpp_components::component)
+rclcpp_components_register_node(qb2_ros2_driver
+  PLUGIN "blickfeld::ros_interop::Qb2Driver" EXECUTABLE qb2_driver)
 
-target_include_directories(qb2_ros2_driver PUBLIC 
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include> 
-  ${rclcpp_INCLUDE_DIRS}
-  ${rclcpp_components_INCLUDE_DIRS}
-  ${diagnostic_msgs_INCLUDE_DIRS} 
-  ${diagnostic_updater_INCLUDE_DIRS} 
-  ${std_msgs_INCLUDE_DIRS} 
-  ${sensor_msgs_INCLUDE_DIRS})
-
-  target_link_libraries(qb2_ros2_driver PUBLIC 
-  ${rclcpp_LIBRARIES} 
-  ${rclcpp_components_LIBRARIES}
-  ${diagnostic_msgs_LIBRARIES}
-  ${diagnostic_updater_LIBRARIES}
-  ${std_msgs_LIBRARIES} 
-  ${sensor_msgs_LIBRARIES} 
-  ${blickfeld-protocol} 
-  qb2_lidar_ros)
-
-target_compile_definitions(qb2_ros2_driver PRIVATE "COMPOSITION_BUILDING_DLL")
-rclcpp_components_register_nodes(qb2_ros2_driver "blickfeld::ros_interop::Qb2Driver")
-
-# add composable node for snapshot driver
 add_library(qb2_ros2_snapshot_driver SHARED src/qb2_ros2_snapshot_driver.cpp)
-
-target_include_directories(qb2_ros2_snapshot_driver PUBLIC 
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${rclcpp_INCLUDE_DIRS}
-  ${rclcpp_components_INCLUDE_DIRS}
-  ${diagnostic_msgs_INCLUDE_DIRS}
-  ${diagnostic_updater_INCLUDE_DIRS} 
-  ${std_msgs_INCLUDE_DIRS}
-  ${sensor_msgs_INCLUDE_DIRS}
-  ${std_srvs_INCLUDE_DIRS})
-
-target_link_libraries(qb2_ros2_snapshot_driver PUBLIC 
-  ${rclcpp_LIBRARIES} 
-  ${rclcpp_components_LIBRARIES}
-  ${diagnostic_msgs_LIBRARIES}
-  ${diagnostic_updater_LIBRARIES}
-  ${std_msgs_LIBRARIES} 
-  ${sensor_msgs_LIBRARIES}
-  ${std_srvs_LIBRARIES} 
-  ${blickfeld-protocol} 
-  qb2_lidar_ros)
-
-target_compile_definitions(qb2_ros2_snapshot_driver PRIVATE "COMPOSITION_BUILDING_DLL")
-rclcpp_components_register_nodes(qb2_ros2_snapshot_driver "blickfeld::ros_interop::Qb2SnapshotDriver")
+target_link_libraries(qb2_ros2_snapshot_driver PUBLIC qb2_lidar_ros rclcpp_components::component
+  std_srvs::std_srvs__rosidl_typesupport_cpp)
+rclcpp_components_register_node(qb2_ros2_snapshot_driver
+  PLUGIN "blickfeld::ros_interop::Qb2SnapshotDriver" EXECUTABLE qb2_snapshot_driver)
 
 install(
   TARGETS qb2_lidar_ros qb2_ros2_driver qb2_ros2_snapshot_driver
@@ -147,10 +104,18 @@ install(
 # Install launch files
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 
+# Install the profile client separately so it can be updated without replacing
+# shared libraries used by a running component container.
+install(PROGRAMS scripts/qb2_profile.py
+  DESTINATION lib/${PROJECT_NAME} RENAME qb2_profile COMPONENT qb2_profile_tools)
+install(FILES config/profiles.yaml
+  DESTINATION share/${PROJECT_NAME}/config COMPONENT qb2_profile_tools)
+
 # Testing
 if(BUILD_TESTING)
   # Add gtests
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   add_subdirectory(tests)
 endif()
 

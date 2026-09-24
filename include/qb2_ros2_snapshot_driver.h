@@ -115,11 +115,11 @@ class Qb2SnapshotDriver {
   /// Thread used to get the snapshot from Qb2s
   boost::asio::thread_pool snapshot_thread_{1};
   std::atomic<bool> snapshot_is_running_{false};
+  std::atomic<bool> stopping_{false};
 
   /// The Diagnostic Updater object to output device driver state
   diagnostic_updater::Updater diagnostic_updater_;
   diagnostic_updater::Heartbeat heartbeat_;
-  std::shared_ptr<diagnostic_updater::TimeStampStatus> stamp_status_;
 };
 
 }  // namespace ros_interop

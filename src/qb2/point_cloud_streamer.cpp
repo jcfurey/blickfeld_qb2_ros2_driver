@@ -81,7 +81,7 @@ CommunicationState PointCloudStreamer::openPointCloudStream() {
   }
 
   /// renew stream context
-  point_cloud_context_ = std::make_unique<grpc::ClientContext>();
+  point_cloud_context_.reset(std::make_unique<grpc::ClientContext>());
   try {
     auto point_cloud_stub = core_processing::services::PointCloud::NewStub(qb2_channel_);
     point_cloud_stream_ = point_cloud_stub->Stream(point_cloud_context_.get(), Qb2PointCloudStreamRequest());
@@ -101,8 +101,8 @@ bool PointCloudStreamer::isStreamingPointCloud() const { return point_cloud_stre
 
 void PointCloudStreamer::disconnect() {
   qb2::disconnect(qb2_channel_, qb2_, node_->get_logger());
-  point_cloud_context_ = nullptr;
-  point_cloud_stream_ = nullptr;
+  point_cloud_stream_.reset();
+  point_cloud_context_.reset();
 }
 
 }  // namespace qb2

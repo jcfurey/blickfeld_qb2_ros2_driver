@@ -1,0 +1,12 @@
+# Only the named fields are updated. Empty/unknown field lists are rejected.
+# Group names: target_frame_rate (includes enabled), foveation (all three fields).
+string[] fields
+ScanPattern configuration
+# Query device limits and validate without applying by default.
+bool dry_run true
+---
+bool success
+string message
+# Distinguishes a successful write followed by failed readback from no write.
+bool applied
+ScanPattern configuration

@@ -95,7 +95,7 @@ enum class CommunicationState {
 struct Qb2RuntimeStatus {
   bool last_frame_success = false;
   double last_frame_duration = 0.;
-  std::chrono::system_clock::time_point last_receive_frame_time;
+  std::chrono::steady_clock::time_point last_receive_frame_time;
   /// HINT: Qb2 frame id is the incremental number since start of the device/qb2 that will come with the Qb2Frame
   uint64_t last_frame_id = 0;
 

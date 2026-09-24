@@ -7,10 +7,13 @@
 
 #include "qb2_ros2_type.h"
 #include "utility/qb2_connection_utils.h"
+#include "utility/qb2_ros2_utils.h"
 
 #include <diagnostic_updater/update_functions.hpp>
 
 #include <optional>
+#include <mutex>
+#include <cmath>
 
 namespace blickfeld {
 namespace ros_interop {
@@ -23,7 +26,15 @@ class DriverStatus {
    * @brief Update the number of published frames
    *
    */
-  void onPublishingFrame() { runtime_status_.total_frames_published++; }
+  void onPublishingFrame() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    runtime_status_.total_frames_published++;
+  }
+
+  void onInvalidFrame() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    runtime_status_.total_frames_dropped++;
+  }
 
   /**
    * @brief Updates the driver runtime status struc based on the input after each frame this should be called
@@ -34,8 +45,9 @@ class DriverStatus {
    * @param[in] receive_time the time of the receiving the response
    */
   void updateRuntimeStatus(uint64_t frame_id, CommunicationState frame_communication_state,
-                           const std::chrono::system_clock::time_point& request_time,
-                           const std::chrono::system_clock::time_point& receive_time) {
+                           const std::chrono::steady_clock::time_point& request_time,
+                           const std::chrono::steady_clock::time_point& receive_time) {
+    std::lock_guard<std::mutex> lock(mutex_);
     runtime_status_.frame_communication_state = frame_communication_state;
     const bool success = runtime_status_.frame_communication_state == CommunicationState::SUCCESS_READ ? true : false;
 
@@ -52,6 +64,7 @@ class DriverStatus {
    */
   void updateScanPattern(const std::optional<Qb2ScanPattern> scan_pattern,
                          const CommunicationState scan_pattern_communication_state) {
+    std::lock_guard<std::mutex> lock(mutex_);
     runtime_status_.scan_pattern_communication_state = scan_pattern_communication_state;
     if (qb2::hasQb2CommunicationFailed(scan_pattern_communication_state) == false && scan_pattern.has_value() == true) {
       scan_pattern_ = scan_pattern.value();
@@ -64,6 +77,7 @@ class DriverStatus {
    * @return float
    */
   float getTargetFrameRate() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (qb2_.snapshot.mode == true) {
       return qb2_.snapshot.frame_rate;
     } else {
@@ -76,9 +90,13 @@ class DriverStatus {
    *
    */
   void disconnect() {
+    std::lock_guard<std::mutex> lock(mutex_);
     runtime_status_.last_frame_success = false;
-    runtime_status_.frame_communication_state = CommunicationState::DISCONNECTED;
-    runtime_status_.scan_pattern_communication_state = CommunicationState::DISCONNECTED;
+    // Preserve the cause of a reconnect, especially authentication failures.
+    if (!qb2::hasQb2CommunicationFailed(runtime_status_.frame_communication_state))
+      runtime_status_.frame_communication_state = CommunicationState::DISCONNECTED;
+    if (!qb2::hasQb2CommunicationFailed(runtime_status_.scan_pattern_communication_state))
+      runtime_status_.scan_pattern_communication_state = CommunicationState::DISCONNECTED;
   }
 
   /**
@@ -88,18 +106,21 @@ class DriverStatus {
    * @return false
    */
   bool isFrameTooOld() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (qb2::hasQb2CommunicationFailed(runtime_status_.frame_communication_state) == true ||
         runtime_status_.frame_communication_state == CommunicationState::NOT_DEFINED ||
         runtime_status_.frame_communication_state == CommunicationState::DISCONNECTED) {
       return false;
     }
 
-    auto duration_since_last_frame = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() -
+    auto duration_since_last_frame = std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                                    runtime_status_.last_receive_frame_time)
                                          .count();
 
     static constexpr float allowed_dropped_frames = 5;
-    float allowed_duration_since_last_frame_in_seconds = allowed_dropped_frames / getTargetFrameRate();
+    const float rate = qb2_.snapshot.mode ? qb2_.snapshot.frame_rate : scan_pattern_.frame_rate;
+    if (!std::isfinite(rate) || rate <= 0) return false;
+    float allowed_duration_since_last_frame_in_seconds = allowed_dropped_frames / rate;
     if (duration_since_last_frame > allowed_duration_since_last_frame_in_seconds) {
       return true;
     }
@@ -112,6 +133,7 @@ class DriverStatus {
    * @param[in, out] status the status to update in diagnostic updater
    */
   void updateDiagnostic(diagnostic_updater::DiagnosticStatusWrapper& status) {
+    std::lock_guard<std::mutex> lock(mutex_);
     switch (runtime_status_.frame_communication_state) {
       case CommunicationState::NOT_DEFINED:
         status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Connecting");
@@ -135,6 +157,11 @@ class DriverStatus {
         break;
     }
 
+    if (runtime_status_.scan_pattern_communication_state == CommunicationState::FAIL_AUTHENTICATION) {
+      status.mergeSummary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Scan pattern authentication failed");
+    }
+    status.add("frame_communication_state", toString(runtime_status_.frame_communication_state));
+    status.add("scan_pattern_communication_state", toString(runtime_status_.scan_pattern_communication_state));
     status.add("device_fqdn", qb2_.hostName());
 
     status.add("last_frame_success", runtime_status_.last_frame_success);
@@ -165,7 +192,7 @@ class DriverStatus {
    * @param[in] last_frame_id the counter of the last frame received from Qb2
    */
   void updateRebootCounter(uint64_t frame_id, bool success, uint64_t last_frame_id) {
-    const bool qb2_rebooted = (frame_id < last_frame_id) && success;
+    const bool qb2_rebooted = have_frame_id_ && (frame_id < last_frame_id) && success;
     if (qb2_rebooted == true) {
       runtime_status_.total_reboots++;
     }
@@ -179,14 +206,12 @@ class DriverStatus {
    * @param[in] request_time the time of the sending the request
    * @param[in] receive_time the time of the receiving the response
    */
-  void updateLastFrameStatus(uint64_t frame_id, bool success, const std::chrono::system_clock::time_point& request_time,
-                             const std::chrono::system_clock::time_point& receive_time) {
-    runtime_status_.last_receive_frame_time = receive_time;
+  void updateLastFrameStatus(uint64_t frame_id, bool success, const std::chrono::steady_clock::time_point& request_time,
+                             const std::chrono::steady_clock::time_point& receive_time) {
+    if (success) runtime_status_.last_receive_frame_time = receive_time;
     runtime_status_.last_frame_duration = std::chrono::duration<double>(receive_time - request_time).count();
     runtime_status_.last_frame_success = success;
-    if (runtime_status_.last_frame_id == 0) {
-      runtime_status_.last_frame_id = frame_id;
-    }
+    (void)frame_id;
   }
 
   /**
@@ -198,12 +223,13 @@ class DriverStatus {
   void updateFrameDrop(uint64_t frame_id, bool success) {
     if (success == true) {
       /// HINT: in stream mode we can calculate the dropped frames after receiving the first frame
-      if (frame_id > runtime_status_.last_frame_id && qb2_.snapshot.mode == false) {
+      if (have_frame_id_ && frame_id > runtime_status_.last_frame_id && qb2_.snapshot.mode == false) {
         /// HINT: if the difference between frame ids is 1 then we have not dropped any frames
         /// HINT: in stream mode we can only identify a dropped frame after receiving a successful frame
         runtime_status_.total_frames_dropped += frame_id - runtime_status_.last_frame_id - 1;
       }
       runtime_status_.last_frame_id = frame_id;
+      have_frame_id_ = true;
     } else {
       if (qb2_.snapshot.mode == true) {
         runtime_status_.total_frames_dropped++;
@@ -211,6 +237,8 @@ class DriverStatus {
     }
   }
 
+  std::mutex mutex_;
+  bool have_frame_id_ = false;
   Qb2Info qb2_;
   Qb2RuntimeStatus runtime_status_;
   Qb2ScanPattern scan_pattern_;

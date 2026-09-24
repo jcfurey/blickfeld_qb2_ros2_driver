@@ -1,0 +1,12 @@
+# Frame-rate profiles for uniform scanning. The device validates the limits
+# for its current field of view. Other scan settings and filters are preserved.
+profiles:
+  balanced:
+    target_frame_rate: 4.0
+    description: General-purpose balance of update rate and points per frame.
+  motion:
+    target_frame_rate: 6.0
+    description: Faster updates with fewer scan lines per frame.
+  mapping:
+    target_frame_rate: 2.0
+    description: More scan lines per frame for slower or stationary scenes.

@@ -18,7 +18,7 @@ def generate_launch_description():
     )
     container = ComposableNodeContainer(
         name="blickfeld_qb2_component",
-        namespace="",
+        namespace=LaunchConfiguration("namespace"),
         package="rclcpp_components",
         executable="component_container",
         composable_node_descriptions=[
@@ -26,10 +26,11 @@ def generate_launch_description():
                 package="blickfeld_qb2_ros2_driver",
                 plugin="blickfeld::ros_interop::Qb2SnapshotDriver",
                 name="blickfeld_qb2_snapshot_driver",
+                namespace=LaunchConfiguration("namespace"),
                 parameters=[LaunchConfiguration("params_file")],
-                remappings=[("trigger_snapshot", "/bf/trigger_snapshot")],
+                remappings=[("trigger_snapshot", "bf/trigger_snapshot")],
             ),
         ],
         output="screen",
     )
-    return LaunchDescription([config, container])
+    return LaunchDescription([DeclareLaunchArgument("namespace", default_value=""), config, container])

@@ -19,11 +19,12 @@ std::pair<CommunicationState, std::optional<Qb2Frame>> PointCloudGetter::readFra
 
   try {
     /// renew get context
-    point_cloud_context_ = std::make_unique<grpc::ClientContext>();
+    auto context = std::make_unique<grpc::ClientContext>();
     /// Timeout of 60 second for Qb2 Get API
     static constexpr uint64_t qb2_api_timeout_in_seconds = 60;
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(qb2_api_timeout_in_seconds);
-    point_cloud_context_->set_deadline(deadline);
+    context->set_deadline(deadline);
+    point_cloud_context_.reset(std::move(context));
 
     Qb2PointCloudGetResponse response;
     auto point_cloud_stub = core_processing::services::PointCloud::NewStub(qb2_channel_);
@@ -34,7 +35,7 @@ std::pair<CommunicationState, std::optional<Qb2Frame>> PointCloudGetter::readFra
       /// prepare for 'stealing' the frame using swap.
       response.mutable_frame()->Swap(&frame);
       RCLCPP_DEBUG_STREAM(node_->get_logger(), "Got a point cloud from Qb2: " << qb2_.hostName() << ".");
-      return std::make_pair(CommunicationState::SUCCESS_READ, frame);
+      return std::make_pair(CommunicationState::SUCCESS_READ, std::move(frame));
 
     } else {
       RCLCPP_WARN_STREAM(node_->get_logger(), "Failed to get a point cloud from Qb2: "

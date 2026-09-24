@@ -1,6 +1,7 @@
 #include "qb2_ros2_driver.h"
 
 #include <rclcpp/exceptions.hpp>
+#include "utility/parameters.h"
 
 #include <string>
 #include <stdexcept>
@@ -9,27 +10,30 @@ namespace blickfeld {
 namespace ros_interop {
 
 Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
-    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_driver", options.use_intra_process_comms(true))),
+    : node_(std::make_shared<rclcpp::Node>("blickfeld_qb2_driver", options)),
       diagnostic_updater_(node_) {
   /// set parameters
-  std::string fqdn = node_->declare_parameter<std::string>("fqdn", "");
-  std::string serial_number = node_->declare_parameter<std::string>("serial_number", "");
-  std::string application_key = node_->declare_parameter<std::string>("application_key", "");
+  std::string fqdn = startupParameter<std::string>(*node_, "fqdn", "");
+  std::string serial_number = startupParameter<std::string>(*node_, "serial_number", "");
+  std::string application_key = startupParameter<std::string>(*node_, "application_key", "");
 
-  std::string system_unix_socket = node_->declare_parameter<std::string>("system_unix_socket", "");
+  application_key = applicationKey(application_key,
+      startupParameter<std::string>(*node_, "application_key_file", ""));
 
-  std::string core_processing_unix_socket = node_->declare_parameter<std::string>("core_processing_unix_socket", "");
-  std::string frame_id = node_->declare_parameter<std::string>("frame_id", "lidar");
-  std::string point_cloud_topic = node_->declare_parameter<std::string>("point_cloud_topic", "~/point_cloud_out");
+  std::string system_unix_socket = startupParameter<std::string>(*node_, "system_unix_socket", "");
 
-  use_measurement_timestamp_ = node_->declare_parameter<bool>("use_measurement_timestamp", use_measurement_timestamp_);
+  std::string core_processing_unix_socket = startupParameter<std::string>(*node_, "core_processing_unix_socket", "");
+  std::string frame_id = startupParameter<std::string>(*node_, "frame_id", "lidar");
+  std::string point_cloud_topic = startupParameter<std::string>(*node_, "point_cloud_topic", "~/point_cloud_out");
+
+  use_measurement_timestamp_ = startupParameter<bool>(*node_, "use_measurement_timestamp", use_measurement_timestamp_);
   RCLCPP_INFO_STREAM(node_->get_logger(),
                      "The 'use_measurement_timestamp' is set to: " << (use_measurement_timestamp_ ? "True" : "False"));
 
-  bool intensity = node_->declare_parameter<bool>("publish_intensity", false);
+  bool intensity = startupParameter<bool>(*node_, "publish_intensity", false);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'publish_intensity' is set to: " << (intensity ? "True" : "False"));
 
-  bool point_id = node_->declare_parameter<bool>("publish_point_id", false);
+  bool point_id = startupParameter<bool>(*node_, "publish_point_id", false);
   RCLCPP_INFO_STREAM(node_->get_logger(), "The 'publish_point_id' is set to: " << (point_id ? "True" : "False"));
 
   /// figure out the host and method of connection
@@ -66,7 +70,7 @@ Qb2Driver::Qb2Driver(rclcpp::NodeOptions options)
   diagnostic_updater_.setHardwareID("Blickfeld Qb2 Driver");
   diagnostic_updater_.add(heartbeat_);
   stamp_status_ = std::make_shared<diagnostic_updater::TimeStampStatus>(diagnostic_updater::TimeStampStatusParam(),
-                                                                        "Read frame time");
+                                                                        "Read frame time", node_->get_clock());
   diagnostic_updater_.add(*stamp_status_);
 
   auto point_cloud_reader = std::make_unique<qb2::PointCloudStreamer>(node_, qb2_info);
@@ -86,11 +90,10 @@ Qb2Driver::~Qb2Driver() {
 
 void Qb2Driver::spinDriver() {
   while (is_running_ && rclcpp::ok(node_->get_node_base_interface()->get_context())) {
-    rclcpp::Time read_frame_ts = node_->now();
     std::optional<Qb2Frame> frame = qb2_->readFrame();
-    stamp_status_->tick(read_frame_ts);
 
-    if (frame.has_value() == true) {
+    if (frame.has_value() == true && is_running_) {
+      stamp_status_->tick(node_->now());
       qb2_->publishFrame(frame.value(),
                          use_measurement_timestamp_ ? rclcpp::Time(frame.value().timestamp()) : node_->now());
     }
